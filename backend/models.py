@@ -32,6 +32,7 @@ class QueryRequest(BaseModel):
     question: str
     category_id: Optional[int] = None
     top_k: int = 5
+    use_rewrite: bool = False
 
 
 class SourceChunk(BaseModel):

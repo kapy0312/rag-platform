@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from models import QueryRequest
 from services.embedding import get_dense_embedding, build_bm25, bm25_scores, reciprocal_rank_fusion
 from services.vector_store import search_dense, get_all_chunks
-from services.llm import stream_llm
+from services.llm import stream_llm, rewrite_query
 import json
 
 router = APIRouter(prefix="/api/query", tags=["query"])
@@ -11,8 +11,13 @@ router = APIRouter(prefix="/api/query", tags=["query"])
 
 @router.post("")
 async def query(body: QueryRequest):
-    # 1. Dense embedding
-    query_vector = await get_dense_embedding(body.question)
+    search_text = body.question
+    if body.use_rewrite:
+        search_text = await rewrite_query(body.question)
+        print(f"[rewrite] 原問題：{body.question} → 改寫後：{search_text}")
+        
+    # 1. Dense embedding（改寫後的句子同時餵給 dense 跟 BM25 兩條路）
+    query_vector = await get_dense_embedding(search_text)
 
     # 2. Dense search（top 10）
     dense_results = await search_dense(query_vector, top_k=10, category_id=body.category_id)
@@ -26,7 +31,7 @@ async def query(body: QueryRequest):
 
     corpus_texts = [c["payload"]["text"] for c in all_chunks]
     bm25 = build_bm25(corpus_texts)
-    top_bm25_indices = bm25_scores(bm25, body.question, n=10)
+    top_bm25_indices = bm25_scores(bm25, search_text, n=10)
     sparse_ids = [all_chunks[i]["id"] for i in top_bm25_indices]
     sparse_map = {all_chunks[i]["id"]: all_chunks[i]
                   ["payload"] for i in top_bm25_indices}
@@ -37,7 +42,7 @@ async def query(body: QueryRequest):
 
     # 5. 取 top_k
     top_ids = fused_ids[:body.top_k]
-    top_chunks = [merged_map[id_] for id_ in top_ids if id_ in merged_map]
+    top_chunks = [merged_map[id] for id in top_ids if id in merged_map]
 
     # log dense scores
     print("\n=== Dense Search Scores ===")

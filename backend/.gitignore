@@ -1,0 +1,4 @@
+rag.db
+uploads/
+__pycache__/
+*.pyc

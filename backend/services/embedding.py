@@ -1,10 +1,10 @@
+import os
 import httpx
 from rank_bm25 import BM25Okapi
 from typing import List
 
-OLLAMA_URL = "http://localhost:11434"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://100.89.23.28:11434")
 EMBED_MODEL = "bge-m3"
-
 
 async def get_dense_embedding(text: str) -> List[float]:
     async with httpx.AsyncClient(timeout=60.0) as client:

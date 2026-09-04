@@ -1,0 +1,1914 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: backend/uploads/**, backend/.venv/**, backend/rag.db, backend/__pycache__/**, **/__pycache__/**, frontend/node_modules/**, frontend/dist/**, .git/**
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+backend/.gitignore
+backend/database.py
+backend/fix.py
+backend/main.py
+backend/models.py
+backend/requirements.txt
+backend/routers/__init__.py
+backend/routers/categories.py
+backend/routers/documents.py
+backend/routers/query.py
+backend/services/__init__.py
+backend/services/embedding.py
+backend/services/llm.py
+backend/services/processor.py
+backend/services/vector_store.py
+docker-compose.yml
+frontend/.gitignore
+frontend/eslint.config.js
+frontend/index.html
+frontend/package.json
+frontend/public/favicon.svg
+frontend/public/icons.svg
+frontend/README.md
+frontend/src/api.js
+frontend/src/App.css
+frontend/src/App.jsx
+frontend/src/assets/hero.png
+frontend/src/assets/react.svg
+frontend/src/assets/vite.svg
+frontend/src/components/CategoryPanel.jsx
+frontend/src/components/ChatPanel.jsx
+frontend/src/components/DocumentPanel.jsx
+frontend/src/components/SourceCard.jsx
+frontend/src/hooks/useSSE.js
+frontend/src/index.css
+frontend/src/main.jsx
+frontend/vite.config.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="backend/.gitignore">
+rag.db
+uploads/
+__pycache__/
+*.pyc
+</file>
+
+<file path="backend/database.py">
+import aiosqlite
+import asyncio
+from pathlib import Path
+
+DB_PATH = Path(__file__).parent / "rag.db"
+
+CREATE_TABLES = """
+CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    color TEXT DEFAULT '#00D4FF',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+    id TEXT PRIMARY KEY,
+    category_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    chunk_count INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending',
+    error_msg TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+);
+"""
+
+
+async def init_db():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executescript(CREATE_TABLES)
+        await db.commit()
+
+
+async def get_db():
+    db = await aiosqlite.connect(DB_PATH)
+    db.row_factory = aiosqlite.Row
+    try:
+        yield db
+    finally:
+        await db.close()
+</file>
+
+<file path="backend/fix.py">
+import sqlite3
+db = sqlite3.connect('rag.db')
+db.execute("DELETE FROM categories WHERE name='三菱'")
+db.commit()
+print('done')
+db.close()
+</file>
+
+<file path="backend/main.py">
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+from database import init_db
+from services.vector_store import ensure_collection
+from routers import categories, documents, query
+# 上面五行是這支檔案要組裝的全部零件：
+# database.init_db          -> SQLite 建表
+# services.vector_store.ensure_collection -> Qdrant 建 collection
+# routers.categories / documents / query  -> 三個業務模組的路由
+
+
+@asynccontextmanager
+# @asynccontextmanager 讓這個 async generator 函式可以被 FastAPI 當成
+# 「啟動時跑一段、關閉時跑一段」的生命週期管理器來用
+async def lifespan(app: FastAPI):
+    # ↓ yield 之前 = app 啟動時執行一次
+    await init_db()            # 確保 categories / documents 兩張表存在（CREATE TABLE IF NOT EXISTS，重複跑不會報錯）
+    await ensure_collection()  # 確保 Qdrant 的向量 collection 存在，同樣是「不存在才建立」的冪等操作
+    # 順序刻意先 SQLite 後 Qdrant，因為後面的路由邏輯兩邊都要能連上
+    yield
+    # ↑ yield 之後 = app 關閉時執行（這裡沒寫，代表目前沒有需要清理的資源，
+    #   例如關閉連線池；之後如果要加，就寫在 yield 下面）
+
+app = FastAPI(title="RAG Platform", lifespan=lifespan)
+# title 只影響自動產生的 API 文件（/docs）顯示，不影響行為
+# lifespan=lifespan 把上面定義的生命週期函式註冊進去，FastAPI 會在收到
+# 第一個請求前自動呼叫它
+
+app.add_middleware(
+    CORSMiddleware,
+    # 瀏覽器同源政策預設會擋掉跨 origin 請求，前端(5173)跟後端(8000)是不同 origin，
+    # 沒有這段設定，某些請求（尤其是 SSE 長連線）在瀏覽器端會被擋
+    allow_origins=["http://localhost:5173"],  # 白名單只放前端 dev server，正式部署要加上實際網域
+    allow_methods=["*"],  # 開發階段全開放，正式環境建議收斂成 GET/POST/DELETE 實際用到的方法
+    allow_headers=["*"],  # 同上，全開放
+)
+
+app.include_router(categories.router)  # 掛上 /api/categories 開頭的路由
+app.include_router(documents.router)   # 掛上 /api/documents 開頭的路由
+app.include_router(query.router)       # 掛上 /api/query 開頭的路由
+# 三支 router 的 prefix 互不重疊，掛載順序不影響行為，
+# FastAPI 是照 URL 路徑比對分派請求，不是照註冊順序
+
+
+@app.get("/health")
+async def health():
+    # 最基本款的存活檢查：process 活著、能回 HTTP 就回 ok
+    # 沒有實際檢查 SQLite / Qdrant / Ollama 是否連得上，
+    # 只代表「這個 API process 還在」，不代表「系統現在能正常服務」
+    return {"status": "ok"}
+</file>
+
+<file path="backend/models.py">
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    color: str = "#00D4FF"
+
+
+class CategoryOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    color: str
+    created_at: str
+
+
+class DocumentOut(BaseModel):
+    id: str
+    category_id: int
+    filename: str
+    original_name: str
+    chunk_count: int
+    status: str
+    error_msg: Optional[str]
+    created_at: str
+
+
+class QueryRequest(BaseModel):
+    question: str
+    category_id: Optional[int] = None
+    top_k: int = 5
+
+
+class SourceChunk(BaseModel):
+    filename: str
+    original_name: str
+    page_number: int
+    snippet: str
+</file>
+
+<file path="backend/requirements.txt">
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+aiosqlite==0.20.0
+qdrant-client==1.11.3
+pymupdf==1.24.11
+rank-bm25==0.2.2
+httpx==0.27.2
+python-multipart==0.0.12
+aiofiles==24.1.0
+</file>
+
+<file path="backend/routers/__init__.py">
+
+</file>
+
+<file path="backend/routers/categories.py">
+from fastapi import APIRouter, Depends, HTTPException
+from aiosqlite import Connection
+from database import get_db
+from models import CategoryCreate, CategoryOut
+from services.vector_store import delete_by_category_id
+import aiosqlite
+
+router = APIRouter(prefix="/api/categories", tags=["categories"])
+
+
+@router.get("", response_model=list[CategoryOut])
+async def list_categories(db: Connection = Depends(get_db)):
+    async with db.execute("SELECT * FROM categories ORDER BY created_at DESC") as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("", response_model=CategoryOut, status_code=201)
+async def create_category(body: CategoryCreate, db: Connection = Depends(get_db)):
+    try:
+        async with db.execute(
+            "INSERT INTO categories (name, description, color) VALUES (?, ?, ?)",
+            (body.name, body.description, body.color)
+        ) as cur:
+            cat_id = cur.lastrowid
+        await db.commit()
+    except aiosqlite.IntegrityError:
+        raise HTTPException(status_code=409, detail="類別名稱已存在")
+
+    async with db.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)) as cur:
+        row = await cur.fetchone()
+    return dict(row)
+
+
+@router.delete("/{cat_id}", status_code=204)
+async def delete_category(cat_id: int, db: Connection = Depends(get_db)):
+    async with db.execute("SELECT id FROM categories WHERE id = ?", (cat_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="類別不存在")
+
+    # 刪除 Qdrant 向量
+    try:
+        await delete_by_category_id(cat_id)
+    except Exception as e:
+        print(f"[WARN] Qdrant delete failed: {e}")
+
+    # 刪除 SQLite 文件記錄與類別
+    await db.execute("DELETE FROM documents WHERE category_id = ?", (cat_id,))
+    await db.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    await db.commit()
+</file>
+
+<file path="backend/routers/documents.py">
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from aiosqlite import Connection
+from database import get_db
+from models import DocumentOut
+from services.processor import process_document
+from services.vector_store import delete_by_document_id
+import aiofiles
+import uuid
+import os
+
+router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+async def _run_processing(pdf_path, doc_id, category_id, filename, original_name, db_path):
+    import aiosqlite
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("UPDATE documents SET status='processing' WHERE id=?", (doc_id,))
+        await db.commit()
+    try:
+        chunk_count = await process_document(pdf_path, doc_id, category_id, filename, original_name)
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "UPDATE documents SET status='done', chunk_count=? WHERE id=?",
+                (chunk_count, doc_id)
+            )
+            await db.commit()
+    except Exception as e:
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "UPDATE documents SET status='error', error_msg=? WHERE id=?",
+                (str(e), doc_id)
+            )
+            await db.commit()
+
+
+@router.get("", response_model=list[DocumentOut])
+async def list_documents(category_id: int, db: Connection = Depends(get_db)):
+    async with db.execute(
+        "SELECT * FROM documents WHERE category_id = ? ORDER BY created_at DESC",
+        (category_id,)
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/upload", response_model=DocumentOut, status_code=201)
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    category_id: int = Form(...),
+    db: Connection = Depends(get_db)
+):
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="只接受 PDF 檔案")
+
+    async with db.execute("SELECT id FROM categories WHERE id = ?", (category_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="類別不存在")
+
+    doc_id = str(uuid.uuid4())
+    filename = f"{doc_id}.pdf"
+    pdf_path = os.path.join(UPLOAD_DIR, filename)
+
+    async with aiofiles.open(pdf_path, "wb") as f:
+        content = await file.read()
+        await f.write(content)
+
+    await db.execute(
+        "INSERT INTO documents (id, category_id, filename, original_name, status) VALUES (?, ?, ?, ?, 'pending')",
+        (doc_id, category_id, filename, file.filename)
+    )
+    await db.commit()
+
+    from database import DB_PATH
+    background_tasks.add_task(
+        _run_processing, pdf_path, doc_id, category_id,
+        filename, file.filename, str(DB_PATH)
+    )
+
+    async with db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)) as cur:
+        row = await cur.fetchone()
+    return dict(row)
+
+
+@router.get("/{doc_id}/status")
+async def get_status(doc_id: str, db: Connection = Depends(get_db)):
+    async with db.execute(
+        "SELECT id, status, chunk_count, error_msg FROM documents WHERE id = ?", (
+            doc_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return dict(row)
+
+
+@router.delete("/{doc_id}", status_code=204)
+async def delete_document(doc_id: str, db: Connection = Depends(get_db)):
+    async with db.execute("SELECT filename FROM documents WHERE id = ?", (doc_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    await delete_by_document_id(doc_id)
+
+    pdf_path = os.path.join(UPLOAD_DIR, row["filename"])
+    if os.path.exists(pdf_path):
+        os.remove(pdf_path)
+
+    await db.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+    await db.commit()
+</file>
+
+<file path="backend/routers/query.py">
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from models import QueryRequest
+from services.embedding import get_dense_embedding, build_bm25, bm25_scores, reciprocal_rank_fusion
+from services.vector_store import search_dense, get_all_chunks
+from services.llm import stream_llm
+import json
+
+router = APIRouter(prefix="/api/query", tags=["query"])
+
+
+@router.post("")
+async def query(body: QueryRequest):
+    # 1. Dense embedding
+    query_vector = await get_dense_embedding(body.question)
+
+    # 2. Dense search（top 10）
+    dense_results = await search_dense(query_vector, top_k=10, category_id=body.category_id)
+    dense_ids = [str(r.id) for r in dense_results]
+    dense_map = {str(r.id): r.payload for r in dense_results}
+
+    # 3. BM25 sparse search
+    all_chunks = await get_all_chunks(category_id=body.category_id)
+    if not all_chunks:
+        raise HTTPException(status_code=400, detail="該類別尚無文件，請先上傳 PDF")
+
+    corpus_texts = [c["payload"]["text"] for c in all_chunks]
+    bm25 = build_bm25(corpus_texts)
+    top_bm25_indices = bm25_scores(bm25, body.question, n=10)
+    sparse_ids = [all_chunks[i]["id"] for i in top_bm25_indices]
+    sparse_map = {all_chunks[i]["id"]: all_chunks[i]
+                  ["payload"] for i in top_bm25_indices}
+
+    # 4. RRF fusion
+    fused_ids = reciprocal_rank_fusion(dense_ids, sparse_ids)
+    merged_map = {**sparse_map, **dense_map}
+
+    # 5. 取 top_k
+    top_ids = fused_ids[:body.top_k]
+    top_chunks = [merged_map[id] for id in top_ids if id in merged_map]
+
+    # log dense scores
+    print("\n=== Dense Search Scores ===")
+    for r in dense_results:
+        p = r.payload
+        print(f"  [{r.score:.4f}] {p['original_name']} p.{p['page_number']} chunk{p['chunk_index']}")
+    print(f"=== Top {body.top_k} after RRF ===")
+    for i, c in enumerate(top_chunks):
+        print(f"  [{i+1}] {c['original_name']} p.{c['page_number']}")
+
+    # 6. SSE streaming
+    sources = [
+        {
+            "filename": c["filename"],
+            "original_name": c["original_name"],
+            "page_number": c["page_number"],
+            "snippet": c["text"][:120],
+        }
+        for c in top_chunks
+    ]
+
+    async def event_stream():
+        yield f"event: sources\ndata: {json.dumps(sources, ensure_ascii=False)}\n\n"
+        async for token in stream_llm(body.question, top_chunks):
+            yield f"event: token\ndata: {json.dumps(token, ensure_ascii=False)}\n\n"
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+</file>
+
+<file path="backend/services/__init__.py">
+
+</file>
+
+<file path="backend/services/embedding.py">
+import os
+import httpx
+from rank_bm25 import BM25Okapi
+from typing import List
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://100.89.23.28:11434")
+EMBED_MODEL = "bge-m3"
+
+async def get_dense_embedding(text: str) -> List[float]:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{OLLAMA_URL}/api/embed",
+            json={"model": EMBED_MODEL, "input": [text]}
+        )
+        resp.raise_for_status()
+        return resp.json()["embeddings"][0]
+
+
+async def get_dense_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{OLLAMA_URL}/api/embed",
+            json={"model": EMBED_MODEL, "input": texts}
+        )
+        resp.raise_for_status()
+        return resp.json()["embeddings"]
+
+
+def tokenize(text: str) -> List[str]:
+    """簡單 character-level bigram tokenizer，對中文友好"""
+    text = text.lower()
+    tokens = []
+    words = text.split()
+    for word in words:
+        if any('\u4e00' <= c <= '\u9fff' for c in word):
+            tokens.extend([word[i:i+2] for i in range(len(word)-1)] or [word])
+        else:
+            tokens.append(word)
+    return tokens
+
+
+def build_bm25(corpus: List[str]) -> BM25Okapi:
+    tokenized = [tokenize(doc) for doc in corpus]
+    return BM25Okapi(tokenized)
+
+
+def bm25_scores(bm25: BM25Okapi, query: str, n: int) -> List[int]:
+    """回傳 top-n 的 corpus index（分數降冪）"""
+    scores = bm25.get_scores(tokenize(query))
+    ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    return ranked[:n]
+
+
+def reciprocal_rank_fusion(
+    dense_ids: List[str],
+    sparse_ids: List[str],
+    k: int = 60
+) -> List[str]:
+    """RRF fusion，回傳依分數排序的 id 清單"""
+    scores: dict[str, float] = {}
+    for rank, id_ in enumerate(dense_ids):
+        scores[id_] = scores.get(id_, 0) + 1 / (k + rank + 1)
+    for rank, id_ in enumerate(sparse_ids):
+        scores[id_] = scores.get(id_, 0) + 1 / (k + rank + 1)
+    return sorted(scores, key=lambda x: scores[x], reverse=True)
+</file>
+
+<file path="backend/services/llm.py">
+import os
+import httpx
+import json
+from typing import AsyncGenerator, List
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://100.89.23.28:11434")
+LLM_MODEL = "qwen3:14b"
+
+
+def build_prompt(question: str, chunks: List[dict]) -> str:
+    context_parts = []
+    for i, c in enumerate(chunks):
+        context_parts.append(
+            f"[來源 {i+1}｜{c['original_name']} 第 {c['page_number']} 頁]\n{c['text']}"
+        )
+    context = "\n\n".join(context_parts)
+    return f"""你是一位專業技術文件助理，請根據以下參考資料回答問題。
+只根據提供的資料回答，若資料不足請說明。回答使用繁體中文。
+
+參考資料：
+{context}
+
+問題：{question}
+
+回答："""
+
+
+async def stream_llm(question: str, chunks: List[dict]) -> AsyncGenerator[str, None]:
+    prompt = build_prompt(question, chunks)
+    payload = {
+        "model": LLM_MODEL,
+        "prompt": prompt,
+        "think": False,
+        "stream": True,
+        "options": {
+            "num_predict": 1024,
+        }
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        async with client.stream(
+            "POST",
+            f"{OLLAMA_URL}/api/generate",
+            json=payload
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    token = data.get("response", "")
+                    if token:
+                        yield token
+                    if data.get("done"):
+                        break
+                except json.JSONDecodeError:
+                    continue
+</file>
+
+<file path="backend/services/processor.py">
+import fitz  # PyMuPDF
+import uuid
+import asyncio
+from typing import List
+from services.embedding import get_dense_embeddings_batch
+from services.vector_store import upsert_chunks
+
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 150
+
+
+def extract_text_by_page(pdf_path: str) -> List[dict]:
+    """回傳 [{page_number, text}]"""
+    doc = fitz.open(pdf_path)
+    pages = []
+    for i, page in enumerate(doc):
+        text = page.get_text("text").strip()
+        if text:
+            pages.append({"page_number": i + 1, "text": text})
+    doc.close()
+    return pages
+
+
+def sliding_window_chunks(pages: List[dict]) -> List[dict]:
+    """
+    把所有 page 文字串接後做 sliding window chunking，
+    同時保留來源 page_number（取 chunk 起始位置對應的 page）
+    """
+    # 建立 (cumulative_char_index, page_number) 映射
+    full_text = ""
+    page_boundaries = []  # (start_char, page_number)
+    for p in pages:
+        page_boundaries.append((len(full_text), p["page_number"]))
+        full_text += p["text"] + "\n"
+
+    def char_to_page(char_idx: int) -> int:
+        page_num = 1
+        for start, pn in page_boundaries:
+            if char_idx >= start:
+                page_num = pn
+            else:
+                break
+        return page_num
+
+    chunks = []
+    start = 0
+    chunk_index = 0
+    while start < len(full_text):
+        end = min(start + CHUNK_SIZE, len(full_text))
+        text = full_text[start:end].strip()
+        if text:
+            chunks.append({
+                "chunk_index": chunk_index,
+                "page_number": char_to_page(start),
+                "text": text,
+            })
+            chunk_index += 1
+        start += CHUNK_SIZE - CHUNK_OVERLAP
+
+    return chunks
+
+
+async def process_document(
+    pdf_path: str,
+    document_id: str,
+    category_id: int,
+    filename: str,
+    original_name: str,
+) -> int:
+    """
+    完整 pipeline：解析 → chunking → embedding → 寫入 Qdrant
+    回傳 chunk 數量
+    """
+    pages = extract_text_by_page(pdf_path)
+    if not pages:
+        raise ValueError("PDF 無可解析文字（可能是掃描圖片型 PDF）")
+
+    chunks = sliding_window_chunks(pages)
+    if not chunks:
+        raise ValueError("chunking 結果為空")
+
+    # 批次 embedding（每批 16 個避免 OOM）
+    BATCH = 16
+    for i in range(0, len(chunks), BATCH):
+        batch = chunks[i:i + BATCH]
+        texts = [c["text"] for c in batch]
+        embeddings = await get_dense_embeddings_batch(texts)
+        for j, emb in enumerate(embeddings):
+            chunks[i + j]["embedding"] = emb
+
+    await upsert_chunks(
+        document_id=document_id,
+        category_id=category_id,
+        chunks=chunks,
+        filename=filename,
+        original_name=original_name,
+    )
+
+    return len(chunks)
+</file>
+
+<file path="backend/services/vector_store.py">
+# backend/services/vector_store.py
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import (
+    Distance, VectorParams, PointStruct,
+    Filter, FieldCondition, MatchValue,
+    FilterSelector
+)
+from typing import List, Optional
+import uuid
+
+COLLECTION = "rag_documents"
+VECTOR_DIM = 1024
+client = AsyncQdrantClient(host="localhost", port=6333)
+
+async def ensure_collection():
+    existing = await client.get_collections()
+    names = [c.name for c in existing.collections]
+    if COLLECTION not in names:
+        await client.create_collection(
+            collection_name=COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE)
+        )
+
+async def upsert_chunks(
+    document_id: str,
+    category_id: int,
+    chunks: List[dict],
+    filename: str,
+    original_name: str
+):
+    points = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector=chunk["embedding"],
+            payload={
+                "document_id": document_id,
+                "category_id": category_id,
+                "chunk_index": chunk["chunk_index"],
+                "page_number": chunk["page_number"],
+                "text": chunk["text"],
+                "filename": filename,
+                "original_name": original_name,
+            }
+        )
+        for chunk in chunks
+    ]
+    await client.upsert(collection_name=COLLECTION, points=points)
+
+async def search_dense(
+    query_vector: List[float],
+    top_k: int = 10,
+    category_id: Optional[int] = None
+):
+    query_filter = None
+    if category_id is not None:
+        query_filter = Filter(
+            must=[FieldCondition(key="category_id", match=MatchValue(value=category_id))]
+        )
+    results = await client.search(
+        collection_name=COLLECTION,
+        query_vector=query_vector,
+        limit=top_k,
+        query_filter=query_filter,
+        with_payload=True
+    )
+    return results
+
+async def get_all_chunks(category_id: Optional[int] = None) -> List[dict]:
+    scroll_filter = None
+    if category_id is not None:
+        scroll_filter = Filter(
+            must=[FieldCondition(key="category_id", match=MatchValue(value=category_id))]
+        )
+    all_points = []
+    offset = None
+    while True:
+        result, next_offset = await client.scroll(
+            collection_name=COLLECTION,
+            scroll_filter=scroll_filter,
+            limit=256,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False
+        )
+        all_points.extend(result)
+        if next_offset is None:
+            break
+        offset = next_offset
+    return [{"id": str(p.id), "payload": p.payload} for p in all_points]
+
+async def delete_by_document_id(document_id: str):
+    await client.delete(
+        collection_name=COLLECTION,
+        points_selector=FilterSelector(filter=Filter(
+            must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+        ))
+    )
+
+async def delete_by_category_id(category_id: int):
+    await client.delete(
+        collection_name=COLLECTION,
+        points_selector=FilterSelector(filter=Filter(
+            must=[FieldCondition(key="category_id", match=MatchValue(value=category_id))]
+        ))
+    )
+</file>
+
+<file path="docker-compose.yml">
+# ===== docker-compose.yml =====
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+</file>
+
+<file path="frontend/.gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path="frontend/eslint.config.js">
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      globals: globals.browser,
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  },
+])
+</file>
+
+<file path="frontend/index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="frontend/package.json">
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.3.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "vite": "^8.0.12"
+  }
+}
+</file>
+
+<file path="frontend/public/favicon.svg">
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="46" fill="none" viewBox="0 0 48 46"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" style="fill:#863bff;fill:color(display-p3 .5252 .23 1);fill-opacity:1"/><mask id="a" width="48" height="46" x="0" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#000" d="M25.842 44.938c-.664.844-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.183c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.498 0-3.579-1.842-3.579H1.133c-.92 0-1.456-1.04-.92-1.787L9.91.473c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.578 1.842 3.578h11.377c.943 0 1.473 1.088.89 1.832L25.843 44.94z" style="fill:#000;fill-opacity:1"/></mask><g mask="url(#a)"><g filter="url(#b)"><ellipse cx="5.508" cy="14.704" fill="#ede6ff" rx="5.508" ry="14.704" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -4.47 31.516)"/></g><g filter="url(#c)"><ellipse cx="10.399" cy="29.851" fill="#ede6ff" rx="10.399" ry="29.851" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -39.328 7.883)"/></g><g filter="url(#d)"><ellipse cx="5.508" cy="30.487" fill="#7e14ff" rx="5.508" ry="30.487" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.814 -25.913 -14.639)scale(1 -1)"/></g><g filter="url(#e)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.814 -32.644 -3.334)scale(1 -1)"/></g><g filter="url(#f)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="matrix(.00324 1 1 -.00324 -34.34 30.47)"/></g><g filter="url(#g)"><ellipse cx="14.072" cy="22.078" fill="#ede6ff" rx="14.072" ry="22.078" style="fill:#ede6ff;fill:color(display-p3 .9275 .9033 1);fill-opacity:1" transform="rotate(93.35 24.506 48.493)scale(-1 1)"/></g><g filter="url(#h)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g><g filter="url(#i)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g><g filter="url(#j)"><ellipse cx=".387" cy="8.972" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(39.51 .387 8.972)"/></g><g filter="url(#k)"><ellipse cx="47.523" cy="-6.092" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 47.523 -6.092)"/></g><g filter="url(#l)"><ellipse cx="41.412" cy="6.333" fill="#47bfff" rx="5.971" ry="9.665" style="fill:#47bfff;fill:color(display-p3 .2799 .748 1);fill-opacity:1" transform="rotate(37.892 41.412 6.333)"/></g><g filter="url(#m)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 -1.88 38.332)"/></g><g filter="url(#n)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 -1.88 38.332)"/></g><g filter="url(#o)"><ellipse cx="35.651" cy="29.907" fill="#7e14ff" rx="4.407" ry="29.108" style="fill:#7e14ff;fill:color(display-p3 .4922 .0767 1);fill-opacity:1" transform="rotate(37.892 35.651 29.907)"/></g><g filter="url(#p)"><ellipse cx="38.418" cy="32.4" fill="#47bfff" rx="5.971" ry="15.297" style="fill:#47bfff;fill:color(display-p3 .2799 .748 1);fill-opacity:1" transform="rotate(37.892 38.418 32.4)"/></g></g><defs><filter id="b" width="60.045" height="41.654" x="-19.77" y="16.149" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="c" width="90.34" height="51.437" x="-54.613" y="-7.533" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="d" width="79.355" height="29.4" x="-49.64" y="2.03" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="e" width="79.579" height="29.4" x="-45.045" y="20.029" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="f" width="79.579" height="29.4" x="-43.513" y="21.178" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="g" width="74.749" height="58.852" x="15.756" y="-17.901" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter><filter id="h" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="i" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="j" width="56.045" height="63.649" x="-27.636" y="-22.853" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="k" width="54.814" height="64.646" x="20.116" y="-38.415" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="l" width="33.541" height="35.313" x="24.641" y="-11.323" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="m" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="n" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="o" width="54.814" height="64.646" x="8.244" y="-2.416" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter><filter id="p" width="39.409" height="43.623" x="18.713" y="10.588" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter></defs></svg>
+</file>
+
+<file path="frontend/public/icons.svg">
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="bluesky-icon" viewBox="0 0 16 17">
+    <g clip-path="url(#bluesky-clip)"><path fill="#08060d" d="M7.75 7.735c-.693-1.348-2.58-3.86-4.334-5.097-1.68-1.187-2.32-.981-2.74-.79C.188 2.065.1 2.812.1 3.251s.241 3.602.398 4.13c.52 1.744 2.367 2.333 4.07 2.145-2.495.37-4.71 1.278-1.805 4.512 3.196 3.309 4.38-.71 4.987-2.746.608 2.036 1.307 5.91 4.93 2.746 2.72-2.746.747-4.143-1.747-4.512 1.702.189 3.55-.4 4.07-2.145.156-.528.397-3.691.397-4.13s-.088-1.186-.575-1.406c-.42-.19-1.06-.395-2.741.79-1.755 1.24-3.64 3.752-4.334 5.099"/></g>
+    <defs><clipPath id="bluesky-clip"><path fill="#fff" d="M.1.85h15.3v15.3H.1z"/></clipPath></defs>
+  </symbol>
+  <symbol id="discord-icon" viewBox="0 0 20 19">
+    <path fill="#08060d" d="M16.224 3.768a14.5 14.5 0 0 0-3.67-1.153c-.158.286-.343.67-.47.976a13.5 13.5 0 0 0-4.067 0c-.128-.306-.317-.69-.476-.976A14.4 14.4 0 0 0 3.868 3.77C1.546 7.28.916 10.703 1.231 14.077a14.7 14.7 0 0 0 4.5 2.306q.545-.748.965-1.587a9.5 9.5 0 0 1-1.518-.74q.191-.14.372-.293c2.927 1.369 6.107 1.369 8.999 0q.183.152.372.294-.723.437-1.52.74.418.838.963 1.588a14.6 14.6 0 0 0 4.504-2.308c.37-3.911-.63-7.302-2.644-10.309m-9.13 8.234c-.878 0-1.599-.82-1.599-1.82 0-.998.705-1.82 1.6-1.82.894 0 1.614.82 1.599 1.82.001 1-.705 1.82-1.6 1.82m5.91 0c-.878 0-1.599-.82-1.599-1.82 0-.998.705-1.82 1.6-1.82.893 0 1.614.82 1.599 1.82 0 1-.706 1.82-1.6 1.82"/>
+  </symbol>
+  <symbol id="documentation-icon" viewBox="0 0 21 20">
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="m15.5 13.333 1.533 1.322c.645.555.967.833.967 1.178s-.322.623-.967 1.179L15.5 18.333m-3.333-5-1.534 1.322c-.644.555-.966.833-.966 1.178s.322.623.966 1.179l1.534 1.321"/>
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M17.167 10.836v-4.32c0-1.41 0-2.117-.224-2.68-.359-.906-1.118-1.621-2.08-1.96-.599-.21-1.349-.21-2.848-.21-2.623 0-3.935 0-4.983.369-1.684.591-3.013 1.842-3.641 3.428C3 6.449 3 7.684 3 10.154v2.122c0 2.558 0 3.838.706 4.726q.306.383.713.671c.76.536 1.79.64 3.581.66"/>
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M3 10a2.78 2.78 0 0 1 2.778-2.778c.555 0 1.209.097 1.748-.047.48-.129.854-.503.982-.982.145-.54.048-1.194.048-1.749a2.78 2.78 0 0 1 2.777-2.777"/>
+  </symbol>
+  <symbol id="github-icon" viewBox="0 0 19 19">
+    <path fill="#08060d" fill-rule="evenodd" d="M9.356 1.85C5.05 1.85 1.57 5.356 1.57 9.694a7.84 7.84 0 0 0 5.324 7.44c.387.079.528-.168.528-.376 0-.182-.013-.805-.013-1.454-2.165.467-2.616-.935-2.616-.935-.349-.91-.864-1.143-.864-1.143-.71-.48.051-.48.051-.48.787.051 1.2.805 1.2.805.695 1.194 1.817.857 2.268.649.064-.507.27-.857.49-1.052-1.728-.182-3.545-.857-3.545-3.87 0-.857.31-1.558.8-2.104-.078-.195-.349-1 .077-2.078 0 0 .657-.208 2.14.805a7.5 7.5 0 0 1 1.946-.26c.657 0 1.328.092 1.946.26 1.483-1.013 2.14-.805 2.14-.805.426 1.078.155 1.883.078 2.078.502.546.799 1.247.799 2.104 0 3.013-1.818 3.675-3.558 3.87.284.247.528.714.528 1.454 0 1.052-.012 1.896-.012 2.156 0 .208.142.455.528.377a7.84 7.84 0 0 0 5.324-7.441c.013-4.338-3.48-7.844-7.773-7.844" clip-rule="evenodd"/>
+  </symbol>
+  <symbol id="social-icon" viewBox="0 0 20 20">
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M12.5 6.667a4.167 4.167 0 1 0-8.334 0 4.167 4.167 0 0 0 8.334 0"/>
+    <path fill="none" stroke="#aa3bff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.35" d="M2.5 16.667a5.833 5.833 0 0 1 8.75-5.053m3.837.474.513 1.035c.07.144.257.282.414.309l.93.155c.596.1.736.536.307.965l-.723.73a.64.64 0 0 0-.152.531l.207.903c.164.715-.213.991-.84.618l-.872-.52a.63.63 0 0 0-.577 0l-.872.52c-.624.373-1.003.094-.84-.618l.207-.903a.64.64 0 0 0-.152-.532l-.723-.729c-.426-.43-.289-.864.306-.964l.93-.156a.64.64 0 0 0 .412-.31l.513-1.034c.28-.562.735-.562 1.012 0"/>
+  </symbol>
+  <symbol id="x-icon" viewBox="0 0 19 19">
+    <path fill="#08060d" fill-rule="evenodd" d="M1.893 1.98c.052.072 1.245 1.769 2.653 3.77l2.892 4.114c.183.261.333.48.333.486s-.068.089-.152.183l-.522.593-.765.867-3.597 4.087c-.375.426-.734.834-.798.905a1 1 0 0 0-.118.148c0 .01.236.017.664.017h.663l.729-.83c.4-.457.796-.906.879-.999a692 692 0 0 0 1.794-2.038c.034-.037.301-.34.594-.675l.551-.624.345-.392a7 7 0 0 1 .34-.374c.006 0 .93 1.306 2.052 2.903l2.084 2.965.045.063h2.275c1.87 0 2.273-.003 2.266-.021-.008-.02-1.098-1.572-3.894-5.547-2.013-2.862-2.28-3.246-2.273-3.266.008-.019.282-.332 2.085-2.38l2-2.274 1.567-1.782c.022-.028-.016-.03-.65-.03h-.674l-.3.342a871 871 0 0 1-1.782 2.025c-.067.075-.405.458-.75.852a100 100 0 0 1-.803.91c-.148.172-.299.344-.99 1.127-.304.343-.32.358-.345.327-.015-.019-.904-1.282-1.976-2.808L6.365 1.85H1.8zm1.782.91 8.078 11.294c.772 1.08 1.413 1.973 1.425 1.984.016.017.241.02 1.05.017l1.03-.004-2.694-3.766L7.796 5.75 5.722 2.852l-1.039-.004-1.039-.004z" clip-rule="evenodd"/>
+  </symbol>
+</svg>
+</file>
+
+<file path="frontend/README.md">
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+</file>
+
+<file path="frontend/src/api.js">
+const BASE = '/api'
+
+export async function getCategories() {
+    const r = await fetch(`${BASE}/categories`)
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+}
+
+export async function createCategory(data) {
+    const r = await fetch(`${BASE}/categories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+}
+
+export async function deleteCategory(id) {
+    const r = await fetch(`${BASE}/categories/${id}`, { method: 'DELETE' })
+    if (!r.ok) throw new Error(await r.text())
+}
+
+export async function getDocuments(categoryId) {
+    const r = await fetch(`${BASE}/documents?category_id=${categoryId}`)
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+}
+
+export async function uploadDocument(file, categoryId) {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('category_id', categoryId)
+    const r = await fetch(`${BASE}/documents/upload`, { method: 'POST', body: fd })
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+}
+
+export async function deleteDocument(id) {
+    const r = await fetch(`${BASE}/documents/${id}`, { method: 'DELETE' })
+    if (!r.ok) throw new Error(await r.text())
+}
+
+export async function getDocumentStatus(id) {
+    const r = await fetch(`${BASE}/documents/${id}/status`)
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+}
+</file>
+
+<file path="frontend/src/App.css">
+.counter {
+  font-size: 16px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 2px solid transparent;
+  transition: border-color 0.3s;
+  margin-bottom: 24px;
+
+  &:hover {
+    border-color: var(--accent-border);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+.hero {
+  position: relative;
+
+  .base,
+  .framework,
+  .vite {
+    inset-inline: 0;
+    margin: 0 auto;
+  }
+
+  .base {
+    width: 170px;
+    position: relative;
+    z-index: 0;
+  }
+
+  .framework,
+  .vite {
+    position: absolute;
+  }
+
+  .framework {
+    z-index: 1;
+    top: 34px;
+    height: 28px;
+    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
+      scale(1.4);
+  }
+
+  .vite {
+    z-index: 0;
+    top: 107px;
+    height: 26px;
+    width: auto;
+    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
+      scale(0.8);
+  }
+}
+
+#center {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+  place-content: center;
+  place-items: center;
+  flex-grow: 1;
+
+  @media (max-width: 1024px) {
+    padding: 32px 20px 24px;
+    gap: 18px;
+  }
+}
+
+#next-steps {
+  display: flex;
+  border-top: 1px solid var(--border);
+  text-align: left;
+
+  & > div {
+    flex: 1 1 0;
+    padding: 32px;
+    @media (max-width: 1024px) {
+      padding: 24px 20px;
+    }
+  }
+
+  .icon {
+    margin-bottom: 16px;
+    width: 22px;
+    height: 22px;
+  }
+
+  @media (max-width: 1024px) {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+#docs {
+  border-right: 1px solid var(--border);
+
+  @media (max-width: 1024px) {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+#next-steps ul {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  margin: 32px 0 0;
+
+  .logo {
+    height: 18px;
+  }
+
+  a {
+    color: var(--text-h);
+    font-size: 16px;
+    border-radius: 6px;
+    background: var(--social-bg);
+    display: flex;
+    padding: 6px 12px;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    transition: box-shadow 0.3s;
+
+    &:hover {
+      box-shadow: var(--shadow);
+    }
+    .button-icon {
+      height: 18px;
+      width: 18px;
+    }
+  }
+
+  @media (max-width: 1024px) {
+    margin-top: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+
+    li {
+      flex: 1 1 calc(50% - 8px);
+    }
+
+    a {
+      width: 100%;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+  }
+}
+
+#spacer {
+  height: 88px;
+  border-top: 1px solid var(--border);
+  @media (max-width: 1024px) {
+    height: 48px;
+  }
+}
+
+.ticks {
+  position: relative;
+  width: 100%;
+
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    top: -4.5px;
+    border: 5px solid transparent;
+  }
+
+  &::before {
+    left: 0;
+    border-left-color: var(--border);
+  }
+  &::after {
+    right: 0;
+    border-right-color: var(--border);
+  }
+}
+</file>
+
+<file path="frontend/src/App.jsx">
+import { useState, useEffect } from "react";
+import { getCategories } from "./api";
+import CategoryPanel from "./components/CategoryPanel";
+import DocumentPanel from "./components/DocumentPanel";
+import ChatPanel from "./components/ChatPanel";
+
+export default function App() {
+  const [categories, setCategories] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState(null);
+
+  async function loadCategories() {
+    try {
+      const data = await getCategories();
+      setCategories(data);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  useEffect(() => {
+    loadCategories();
+  }, []);
+
+  return (
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+      <CategoryPanel
+        categories={categories}
+        selected={selectedCategory}
+        onSelect={setSelectedCategory}
+        onRefresh={loadCategories}
+      />
+      <DocumentPanel category={selectedCategory} onDocumentsChange={() => {}} />
+      <ChatPanel categories={categories} selectedCategory={selectedCategory} />
+    </div>
+  );
+}
+</file>
+
+<file path="frontend/src/assets/react.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="35.93" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 228"><path fill="#00D8FF" d="M210.483 73.824a171.49 171.49 0 0 0-8.24-2.597c.465-1.9.893-3.777 1.273-5.621c6.238-30.281 2.16-54.676-11.769-62.708c-13.355-7.7-35.196.329-57.254 19.526a171.23 171.23 0 0 0-6.375 5.848a155.866 155.866 0 0 0-4.241-3.917C100.759 3.829 77.587-4.822 63.673 3.233C50.33 10.957 46.379 33.89 51.995 62.588a170.974 170.974 0 0 0 1.892 8.48c-3.28.932-6.445 1.924-9.474 2.98C17.309 83.498 0 98.307 0 113.668c0 15.865 18.582 31.778 46.812 41.427a145.52 145.52 0 0 0 6.921 2.165a167.467 167.467 0 0 0-2.01 9.138c-5.354 28.2-1.173 50.591 12.134 58.266c13.744 7.926 36.812-.22 59.273-19.855a145.567 145.567 0 0 0 5.342-4.923a168.064 168.064 0 0 0 6.92 6.314c21.758 18.722 43.246 26.282 56.54 18.586c13.731-7.949 18.194-32.003 12.4-61.268a145.016 145.016 0 0 0-1.535-6.842c1.62-.48 3.21-.974 4.76-1.488c29.348-9.723 48.443-25.443 48.443-41.52c0-15.417-17.868-30.326-45.517-39.844Zm-6.365 70.984c-1.4.463-2.836.91-4.3 1.345c-3.24-10.257-7.612-21.163-12.963-32.432c5.106-11 9.31-21.767 12.459-31.957c2.619.758 5.16 1.557 7.61 2.4c23.69 8.156 38.14 20.213 38.14 29.504c0 9.896-15.606 22.743-40.946 31.14Zm-10.514 20.834c2.562 12.94 2.927 24.64 1.23 33.787c-1.524 8.219-4.59 13.698-8.382 15.893c-8.067 4.67-25.32-1.4-43.927-17.412a156.726 156.726 0 0 1-6.437-5.87c7.214-7.889 14.423-17.06 21.459-27.246c12.376-1.098 24.068-2.894 34.671-5.345a134.17 134.17 0 0 1 1.386 6.193ZM87.276 214.515c-7.882 2.783-14.16 2.863-17.955.675c-8.075-4.657-11.432-22.636-6.853-46.752a156.923 156.923 0 0 1 1.869-8.499c10.486 2.32 22.093 3.988 34.498 4.994c7.084 9.967 14.501 19.128 21.976 27.15a134.668 134.668 0 0 1-4.877 4.492c-9.933 8.682-19.886 14.842-28.658 17.94ZM50.35 144.747c-12.483-4.267-22.792-9.812-29.858-15.863c-6.35-5.437-9.555-10.836-9.555-15.216c0-9.322 13.897-21.212 37.076-29.293c2.813-.98 5.757-1.905 8.812-2.773c3.204 10.42 7.406 21.315 12.477 32.332c-5.137 11.18-9.399 22.249-12.634 32.792a134.718 134.718 0 0 1-6.318-1.979Zm12.378-84.26c-4.811-24.587-1.616-43.134 6.425-47.789c8.564-4.958 27.502 2.111 47.463 19.835a144.318 144.318 0 0 1 3.841 3.545c-7.438 7.987-14.787 17.08-21.808 26.988c-12.04 1.116-23.565 2.908-34.161 5.309a160.342 160.342 0 0 1-1.76-7.887Zm110.427 27.268a347.8 347.8 0 0 0-7.785-12.803c8.168 1.033 15.994 2.404 23.343 4.08c-2.206 7.072-4.956 14.465-8.193 22.045a381.151 381.151 0 0 0-7.365-13.322Zm-45.032-43.861c5.044 5.465 10.096 11.566 15.065 18.186a322.04 322.04 0 0 0-30.257-.006c4.974-6.559 10.069-12.652 15.192-18.18ZM82.802 87.83a323.167 323.167 0 0 0-7.227 13.238c-3.184-7.553-5.909-14.98-8.134-22.152c7.304-1.634 15.093-2.97 23.209-3.984a321.524 321.524 0 0 0-7.848 12.897Zm8.081 65.352c-8.385-.936-16.291-2.203-23.593-3.793c2.26-7.3 5.045-14.885 8.298-22.6a321.187 321.187 0 0 0 7.257 13.246c2.594 4.48 5.28 8.868 8.038 13.147Zm37.542 31.03c-5.184-5.592-10.354-11.779-15.403-18.433c4.902.192 9.899.29 14.978.29c5.218 0 10.376-.117 15.453-.343c-4.985 6.774-10.018 12.97-15.028 18.486Zm52.198-57.817c3.422 7.8 6.306 15.345 8.596 22.52c-7.422 1.694-15.436 3.058-23.88 4.071a382.417 382.417 0 0 0 7.859-13.026a347.403 347.403 0 0 0 7.425-13.565Zm-16.898 8.101a358.557 358.557 0 0 1-12.281 19.815a329.4 329.4 0 0 1-23.444.823c-7.967 0-15.716-.248-23.178-.732a310.202 310.202 0 0 1-12.513-19.846h.001a307.41 307.41 0 0 1-10.923-20.627a310.278 310.278 0 0 1 10.89-20.637l-.001.001a307.318 307.318 0 0 1 12.413-19.761c7.613-.576 15.42-.876 23.31-.876H128c7.926 0 15.743.303 23.354.883a329.357 329.357 0 0 1 12.335 19.695a358.489 358.489 0 0 1 11.036 20.54a329.472 329.472 0 0 1-11 20.722Zm22.56-122.124c8.572 4.944 11.906 24.881 6.52 51.026c-.344 1.668-.73 3.367-1.15 5.09c-10.622-2.452-22.155-4.275-34.23-5.408c-7.034-10.017-14.323-19.124-21.64-27.008a160.789 160.789 0 0 1 5.888-5.4c18.9-16.447 36.564-22.941 44.612-18.3ZM128 90.808c12.625 0 22.86 10.235 22.86 22.86s-10.235 22.86-22.86 22.86s-22.86-10.235-22.86-22.86s10.235-22.86 22.86-22.86Z"></path></svg>
+</file>
+
+<file path="frontend/src/assets/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" width="77" height="47" fill="none" aria-labelledby="vite-logo-title" viewBox="0 0 77 47"><title id="vite-logo-title">Vite</title><style>.parenthesis{fill:#000}@media (prefers-color-scheme:dark){.parenthesis{fill:#fff}}</style><path fill="#9135ff" d="M40.151 45.71c-.663.844-2.02.374-2.02-.699V34.708a2.26 2.26 0 0 0-2.262-2.262H24.493c-.92 0-1.457-1.04-.92-1.788l7.479-10.471c1.07-1.498 0-3.578-1.842-3.578H15.443c-.92 0-1.456-1.04-.92-1.788l9.696-13.576c.213-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.472c-1.07 1.497 0 3.578 1.842 3.578h11.376c.944 0 1.474 1.087.89 1.83L40.153 45.712z"/><mask id="a" width="48" height="47" x="14" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#000" d="M40.047 45.71c-.663.843-2.02.374-2.02-.699V34.708a2.26 2.26 0 0 0-2.262-2.262H24.389c-.92 0-1.457-1.04-.92-1.788l7.479-10.472c1.07-1.497 0-3.578-1.842-3.578H15.34c-.92 0-1.456-1.04-.92-1.788l9.696-13.575c.213-.297.556-.474.92-.474H53.93c.92 0 1.456 1.04.92 1.788L47.37 13.03c-1.07 1.498 0 3.578 1.842 3.578h11.376c.944 0 1.474 1.088.89 1.831L40.049 45.712z"/></mask><g mask="url(#a)"><g filter="url(#b)"><ellipse cx="5.508" cy="14.704" fill="#eee6ff" rx="5.508" ry="14.704" transform="rotate(269.814 20.96 11.29)scale(-1 1)"/></g><g filter="url(#c)"><ellipse cx="10.399" cy="29.851" fill="#eee6ff" rx="10.399" ry="29.851" transform="rotate(89.814 -16.902 -8.275)scale(1 -1)"/></g><g filter="url(#d)"><ellipse cx="5.508" cy="30.487" fill="#8900ff" rx="5.508" ry="30.487" transform="rotate(89.814 -19.197 -7.127)scale(1 -1)"/></g><g filter="url(#e)"><ellipse cx="5.508" cy="30.599" fill="#8900ff" rx="5.508" ry="30.599" transform="rotate(89.814 -25.928 4.177)scale(1 -1)"/></g><g filter="url(#f)"><ellipse cx="5.508" cy="30.599" fill="#8900ff" rx="5.508" ry="30.599" transform="rotate(89.814 -25.738 5.52)scale(1 -1)"/></g><g filter="url(#g)"><ellipse cx="14.072" cy="22.078" fill="#eee6ff" rx="14.072" ry="22.078" transform="rotate(93.35 31.245 55.578)scale(-1 1)"/></g><g filter="url(#h)"><ellipse cx="3.47" cy="21.501" fill="#8900ff" rx="3.47" ry="21.501" transform="rotate(89.009 35.419 55.202)scale(-1 1)"/></g><g filter="url(#i)"><ellipse cx="3.47" cy="21.501" fill="#8900ff" rx="3.47" ry="21.501" transform="rotate(89.009 35.419 55.202)scale(-1 1)"/></g><g filter="url(#j)"><ellipse cx="14.592" cy="9.743" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(39.51 14.592 9.743)"/></g><g filter="url(#k)"><ellipse cx="61.728" cy="-5.321" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 61.728 -5.32)"/></g><g filter="url(#l)"><ellipse cx="55.618" cy="7.104" fill="#00c2ff" rx="5.971" ry="9.665" transform="rotate(37.892 55.618 7.104)"/></g><g filter="url(#m)"><ellipse cx="12.326" cy="39.103" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 12.326 39.103)"/></g><g filter="url(#n)"><ellipse cx="12.326" cy="39.103" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 12.326 39.103)"/></g><g filter="url(#o)"><ellipse cx="49.857" cy="30.678" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 49.857 30.678)"/></g><g filter="url(#p)"><ellipse cx="52.623" cy="33.171" fill="#00c2ff" rx="5.971" ry="15.297" transform="rotate(37.892 52.623 33.17)"/></g></g><path d="M6.919 0c-9.198 13.166-9.252 33.575 0 46.789h6.215c-9.25-13.214-9.196-33.623 0-46.789zm62.424 0h-6.215c9.198 13.166 9.252 33.575 0 46.789h6.215c9.25-13.214 9.196-33.623 0-46.789" class="parenthesis"/><defs><filter id="b" width="60.045" height="41.654" x="-5.564" y="16.92" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="c" width="90.34" height="51.437" x="-40.407" y="-6.762" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="d" width="79.355" height="29.4" x="-35.435" y="2.801" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="e" width="79.579" height="29.4" x="-30.84" y="20.8" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="f" width="79.579" height="29.4" x="-29.307" y="21.949" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="g" width="74.749" height="58.852" x="29.961" y="-17.13" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="h" width="61.377" height="25.362" x="37.754" y="3.055" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="i" width="61.377" height="25.362" x="37.754" y="3.055" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="j" width="56.045" height="63.649" x="-13.43" y="-22.082" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="k" width="54.814" height="64.646" x="34.321" y="-37.644" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="l" width="33.541" height="35.313" x="38.847" y="-10.552" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="m" width="54.814" height="64.646" x="-15.081" y="6.78" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="n" width="54.814" height="64.646" x="-15.081" y="6.78" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="o" width="54.814" height="64.646" x="22.45" y="-1.645" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="p" width="39.409" height="43.623" x="32.919" y="11.36" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter></defs></svg>
+</file>
+
+<file path="frontend/src/components/CategoryPanel.jsx">
+import { useState } from "react";
+import { createCategory, deleteCategory } from "../api";
+
+const PRESET_COLORS = [
+  "#00D4FF",
+  "#7C3AED",
+  "#059669",
+  "#DC2626",
+  "#D97706",
+  "#DB2777",
+];
+
+export default function CategoryPanel({
+  categories,
+  selected,
+  onSelect,
+  onRefresh,
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+    color: "#00D4FF",
+  });
+  const [loading, setLoading] = useState(false);
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    setLoading(true);
+    try {
+      await createCategory(form);
+      setForm({ name: "", description: "", color: "#00D4FF" });
+      setShowForm(false);
+      onRefresh();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDelete(e, id) {
+    e.stopPropagation();
+    if (!confirm("刪除此類別將同時刪除所有文件與向量，確定？")) return;
+    try {
+      await deleteCategory(id);
+      onRefresh();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col h-full"
+      style={{
+        width: 220,
+        background: "#0f1320",
+        borderRight: "1px solid #1e2a3a",
+      }}
+    >
+      <div className="p-4 border-b border-slate-800">
+        <h2 className="text-xs font-semibold tracking-widest text-slate-400 uppercase mb-3">
+          類別
+        </h2>
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          className="w-full text-sm py-1.5 rounded border border-cyan-500 text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+        >
+          {showForm ? "取消" : "＋ 新增類別"}
+        </button>
+      </div>
+
+      {showForm && (
+        <form
+          onSubmit={handleCreate}
+          className="p-4 border-b border-slate-800 space-y-2"
+        >
+          <input
+            className="w-full bg-slate-800 text-sm rounded px-2 py-1.5 outline-none border border-slate-700 focus:border-cyan-500"
+            placeholder="類別名稱"
+            value={form.name}
+            onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))}
+          />
+          <input
+            className="w-full bg-slate-800 text-sm rounded px-2 py-1.5 outline-none border border-slate-700 focus:border-cyan-500"
+            placeholder="描述（選填）"
+            value={form.description}
+            onChange={(e) =>
+              setForm((v) => ({ ...v, description: e.target.value }))
+            }
+          />
+          <div className="flex gap-1.5 flex-wrap">
+            {PRESET_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setForm((v) => ({ ...v, color: c }))}
+                className="w-5 h-5 rounded-full transition-transform hover:scale-110"
+                style={{
+                  background: c,
+                  outline: form.color === c ? `2px solid ${c}` : "none",
+                  outlineOffset: 2,
+                }}
+              />
+            ))}
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full text-sm py-1.5 rounded bg-cyan-500 text-slate-900 font-semibold hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {loading ? "建立中..." : "建立"}
+          </button>
+        </form>
+      )}
+
+      <div className="flex-1 overflow-y-auto py-2">
+        {categories.map((cat) => (
+          <div
+            key={cat.id}
+            onClick={() => onSelect(selected?.id === cat.id ? null : cat)}
+            className={`flex items-center gap-2 px-3 py-2 mx-2 rounded cursor-pointer group transition-colors ${
+              selected?.id === cat.id
+                ? "bg-slate-700/60"
+                : "hover:bg-slate-800/60"
+            }`}
+          >
+            <span
+              className="w-2 h-2 rounded-full flex-shrink-0"
+              style={{ background: cat.color }}
+            />
+            <span className="text-sm flex-1 truncate">{cat.name}</span>
+            <button
+              onClick={(e) => handleDelete(e, cat.id)}
+              className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 text-xs transition-opacity"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="frontend/src/components/ChatPanel.jsx">
+import { useState, useRef, useEffect } from "react";
+import { useSSE } from "../hooks/useSSE";
+import SourceCard from "./SourceCard";
+
+export default function ChatPanel({ categories, selectedCategory }) {
+  const [queryCategory, setQueryCategory] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const { query, streaming, abort } = useSSE();
+  const bottomRef = useRef();
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function handleSend() {
+    const q = input.trim();
+    if (!q || streaming) return;
+    setInput("");
+
+    const userMsg = { role: "user", text: q };
+    const assistantMsg = { role: "assistant", text: "", sources: [] };
+    setMessages((v) => [...v, userMsg, assistantMsg]);
+    const idx = messages.length + 1;
+
+    await query({
+      question: q,
+      categoryId: queryCategory,
+      onSources: (sources) => {
+        setMessages((v) =>
+          v.map((m, i) => (i === idx ? { ...m, sources } : m)),
+        );
+      },
+      onToken: (token) => {
+        setMessages((v) =>
+          v.map((m, i) => (i === idx ? { ...m, text: m.text + token } : m)),
+        );
+      },
+      onDone: () => {},
+    });
+  }
+
+  return (
+    <div
+      className="flex flex-col flex-1 h-full"
+      style={{ background: "#0a0e1a" }}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800">
+        <span className="text-xs text-slate-400">查詢範圍：</span>
+        <select
+          value={queryCategory ?? ""}
+          onChange={(e) =>
+            setQueryCategory(
+              e.target.value === "" ? null : Number(e.target.value),
+            )
+          }
+          className="text-sm bg-slate-800 border border-slate-700 rounded px-2 py-1 outline-none focus:border-cyan-500 text-slate-200"
+        >
+          <option value="">全部類別</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-slate-600 space-y-2">
+            <p className="text-2xl">⚡</p>
+            <p className="text-sm">上傳 PDF 後輸入問題開始查詢</p>
+          </div>
+        )}
+        {messages.map((msg, i) => (
+          <div
+            key={i}
+            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+          >
+            <div
+              className={`max-w-[75%] space-y-3 ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}
+            >
+              <div
+                className={`rounded-xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+                  msg.role === "user"
+                    ? "bg-cyan-500/20 text-cyan-100 border border-cyan-500/30"
+                    : "bg-slate-800/60 text-slate-200"
+                }`}
+              >
+                {msg.text ||
+                  (msg.role === "assistant" &&
+                  streaming &&
+                  i === messages.length - 1 ? (
+                    <span className="animate-pulse text-slate-500">
+                      思考中...
+                    </span>
+                  ) : null)}
+              </div>
+              {msg.role === "assistant" && msg.sources?.length > 0 && (
+                <div className="w-full space-y-2">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">
+                    參考來源
+                  </p>
+                  {msg.sources.map((s, j) => (
+                    <SourceCard key={j} source={s} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div className="p-4 border-t border-slate-800">
+        <div className="flex gap-2">
+          <input
+            className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-cyan-500 text-slate-200 placeholder-slate-500"
+            placeholder="輸入問題..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+            disabled={streaming}
+          />
+          <button
+            onClick={streaming ? abort : handleSend}
+            className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              streaming
+                ? "bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30"
+                : "bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+            }`}
+          >
+            {streaming ? "停止" : "送出"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="frontend/src/components/DocumentPanel.jsx">
+import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  getDocuments,
+  uploadDocument,
+  deleteDocument,
+  getDocumentStatus,
+} from "../api";
+
+const STATUS_STYLE = {
+  pending: { label: "待處理", color: "#94a3b8" },
+  processing: { label: "處理中", color: "#f59e0b" },
+  done: { label: "完成", color: "#10b981" },
+  error: { label: "錯誤", color: "#ef4444" },
+};
+
+export default function DocumentPanel({ category, onDocumentsChange }) {
+  const [docs, setDocs] = useState([]);
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef();
+  const pollingRef = useRef({});
+
+  const loadDocs = useCallback(async () => {
+    if (!category) return;
+    const data = await getDocuments(category.id);
+    setDocs(data);
+    onDocumentsChange?.(data);
+    data
+      .filter((d) => d.status === "pending" || d.status === "processing")
+      .forEach(startPolling);
+  }, [category]);
+
+  useEffect(() => {
+    setDocs([]);
+    Object.values(pollingRef.current).forEach(clearInterval);
+    pollingRef.current = {};
+    loadDocs();
+  }, [category]);
+
+  function startPolling(doc) {
+    if (pollingRef.current[doc.id]) return;
+    pollingRef.current[doc.id] = setInterval(async () => {
+      try {
+        const s = await getDocumentStatus(doc.id);
+        if (s.status === "done" || s.status === "error") {
+          clearInterval(pollingRef.current[doc.id]);
+          delete pollingRef.current[doc.id];
+          loadDocs();
+        }
+      } catch {
+        clearInterval(pollingRef.current[doc.id]);
+        delete pollingRef.current[doc.id];
+      }
+    }, 2000);
+  }
+
+  async function handleUpload(file) {
+    if (!file || !file.name.endsWith(".pdf")) return alert("只接受 PDF");
+    setUploading(true);
+    try {
+      const doc = await uploadDocument(file, category.id);
+      setDocs((v) => [doc, ...v]);
+      startPolling(doc);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDelete(id) {
+    if (!confirm("確定刪除此文件？")) return;
+    try {
+      await deleteDocument(id);
+      clearInterval(pollingRef.current[id]);
+      delete pollingRef.current[id];
+      setDocs((v) => v.filter((d) => d.id !== id));
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  if (!category)
+    return (
+      <div
+        className="flex items-center justify-center h-full text-slate-600 text-sm"
+        style={{ width: 300 }}
+      >
+        請先選擇類別
+      </div>
+    );
+
+  return (
+    <div
+      className="flex flex-col h-full"
+      style={{
+        width: 300,
+        background: "#0d1526",
+        borderRight: "1px solid #1e2a3a",
+      }}
+    >
+      <div className="p-4 border-b border-slate-800">
+        <div className="flex items-center gap-2 mb-3">
+          <span
+            className="w-2.5 h-2.5 rounded-full"
+            style={{ background: category.color }}
+          />
+          <h2 className="text-sm font-semibold truncate">{category.name}</h2>
+        </div>
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            handleUpload(e.dataTransfer.files[0]);
+          }}
+          onClick={() => fileRef.current.click()}
+          className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+            dragging
+              ? "border-cyan-400 bg-cyan-500/10"
+              : "border-slate-700 hover:border-slate-500"
+          }`}
+        >
+          <p className="text-xs text-slate-400">
+            {uploading ? "上傳中..." : "拖曳或點擊上傳 PDF"}
+          </p>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf"
+            className="hidden"
+            onChange={(e) => handleUpload(e.target.files[0])}
+          />
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto py-2 space-y-1 px-2">
+        {docs.length === 0 && (
+          <p className="text-center text-slate-600 text-xs mt-8">尚無文件</p>
+        )}
+        {docs.map((doc) => {
+          const s = STATUS_STYLE[doc.status] || STATUS_STYLE.pending;
+          return (
+            <div
+              key={doc.id}
+              className="flex items-start gap-2 p-2 rounded bg-slate-800/40 group"
+            >
+              <div className="flex-1 min-w-0">
+                <p className="text-xs truncate text-slate-200">
+                  {doc.original_name}
+                </p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[10px]" style={{ color: s.color }}>
+                    {s.label}
+                  </span>
+                  {doc.status === "done" && (
+                    <span className="text-[10px] text-slate-500">
+                      {doc.chunk_count} chunks
+                    </span>
+                  )}
+                  {doc.status === "error" && (
+                    <span
+                      className="text-[10px] text-red-400 truncate"
+                      title={doc.error_msg}
+                    >
+                      ⚠ {doc.error_msg}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => handleDelete(doc.id)}
+                className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 text-xs flex-shrink-0 transition-opacity"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="frontend/src/components/SourceCard.jsx">
+export default function SourceCard({ source }) {
+  return (
+    <div className="rounded border border-slate-700 bg-slate-800/50 p-3 text-xs space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-cyan-400 font-medium truncate">
+          {source.original_name}
+        </span>
+        <span className="text-slate-500 flex-shrink-0">
+          第 {source.page_number} 頁
+        </span>
+      </div>
+      <p className="text-slate-400 leading-relaxed line-clamp-3">
+        {source.snippet}
+      </p>
+    </div>
+  );
+}
+</file>
+
+<file path="frontend/src/hooks/useSSE.js">
+import { useState, useRef, useCallback } from 'react'
+
+export function useSSE() {
+    const [streaming, setStreaming] = useState(false)
+    const abortRef = useRef(null)
+
+    const query = useCallback(async ({ question, categoryId, topK = 5, onSources, onToken, onDone }) => {
+        setStreaming(true)
+        const controller = new AbortController()
+        abortRef.current = controller
+
+        try {
+            const resp = await fetch('/api/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question, category_id: categoryId ?? null, top_k: topK }),
+                signal: controller.signal,
+            })
+
+            if (!resp.ok) throw new Error(await resp.text())
+
+            const reader = resp.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop()
+
+                let eventType = ''
+                for (const line of lines) {
+                    if (line.startsWith('event:')) {
+                        eventType = line.slice(6).trim()
+                    } else if (line.startsWith('data:')) {
+                        const data = JSON.parse(line.slice(5).trim())
+                        if (eventType === 'sources') onSources?.(data)
+                        else if (eventType === 'token') onToken?.(data)
+                        else if (eventType === 'done') onDone?.()
+                    }
+                }
+            }
+        } catch (e) {
+            if (e.name !== 'AbortError') console.error(e)
+        } finally {
+            setStreaming(false)
+        }
+    }, [])
+
+    const abort = useCallback(() => abortRef.current?.abort(), [])
+
+    return { query, streaming, abort }
+}
+</file>
+
+<file path="frontend/src/index.css">
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0a0e1a;
+  color: #e2e8f0;
+  font-family: 'Inter', 'Noto Sans TC', sans-serif;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1f2e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+</file>
+
+<file path="frontend/src/main.jsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+
+<file path="frontend/vite.config.js">
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': 'http://127.0.0.1:8000',
+    },
+  },
+})
+</file>
+
+</files>

@@ -1,8 +1,9 @@
+import os
 import httpx
 import json
 from typing import AsyncGenerator, List
 
-OLLAMA_URL = "http://localhost:11434"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://100.89.23.28:11434")
 LLM_MODEL = "qwen3:14b"
 
 
@@ -54,3 +55,21 @@ async def stream_llm(question: str, chunks: List[dict]) -> AsyncGenerator[str, N
                         break
                 except json.JSONDecodeError:
                     continue
+
+# services/llm.py 新增
+async def rewrite_query(question: str) -> str:
+    """把口語問題改寫成適合檢索的詞彙，用小模型跑，只做這一件事"""
+    prompt = f"""將以下問題改寫成更適合在文件中檢索的關鍵字組合，保留原意，
+只輸出改寫後的句子本身，不要加任何說明或標點以外的文字，
+必須使用繁體中文，不可以輸出簡體字：
+
+問題：{question}
+改寫："""
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        resp = await client.post(f"{OLLAMA_URL}/api/generate", json={
+            "model": "qwen3:8b",
+            "prompt": prompt,
+            "stream": False,
+        })
+        resp.raise_for_status()
+        return resp.json()["response"].strip()

@@ -1,0 +1,175 @@
+{
+  "instructions": "這份測試集的內容來自 致富心態_v2.pdf 實際文字（用 pdftotext 擷取後核對頁碼），不是佔位範例。expected_source 的 page_number 是核對過的真實頁碼，用來驗證檢索階段有沒有抓到對的來源。上傳這份 PDF 到系統的『致富心態』分類底下之後，就可以直接拿這份測試集跑 run_eval.py。",
+  "categories_explained": {
+    "direct_fact": "書裡有明確寫出答案的單一事實查詢，及格線",
+    "colloquial_rephrase": "跟某個 direct_fact 問的是同一件事，但故意用口語、症狀式問法而不是書裡的用詞，用來量測 query rewriting 有沒有實際帶來檢索品質提升",
+    "structural_overview": "問全書章節總覽的問題，這本書恰好沒有獨立的目錄頁、20 章標題分散嵌在內文裡，是先前真的讓系統產生幻覺的那一類問題，留著追蹤這個弱點有沒有隨微調改善",
+    "out_of_scope": "書裡完全沒提到的內容（定價、作者年齡、ISBN），正確答案應該是『資料不足』，測試模型會不會老實拒答",
+    "multi_chunk_synthesis": "答案要合併書裡兩個不同段落的內容才答得完整"
+  },
+  "test_cases": [
+    {
+      "id": "q001",
+      "category": "direct_fact",
+      "question": "本書作者是誰？他曾經在哪些媒體當過專欄作家？",
+      "reference_answer": "作者是摩根·豪瑟（Morgan Housel），曾在《華爾街日報》和財經網站 The Motley Fool（萬里富）當過多年專欄作家。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 1
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q002",
+      "category": "colloquial_rephrase",
+      "pairs_with": "q003",
+      "question": "是不是越聰明的人就越會理財、越會賺錢？",
+      "reference_answer": "不是，書中指出善於理財跟聰不聰明幾乎沒有關係，反而跟一個人的行為處事習慣大有關係，即使是絕頂聰明的天才，情緒失控時一樣可能鬧出財務災難。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 4
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q003",
+      "category": "direct_fact",
+      "question": "根據書中定義，「善於理財」跟什麼幾乎沒有關係，卻和什麼大有關係？",
+      "reference_answer": "跟「有多聰明」幾乎無關，和「行為處事」大有關係。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 4
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q004",
+      "category": "colloquial_rephrase",
+      "pairs_with": "q005",
+      "question": "為什麼有些人薪水不高卻過得很開心，反而有錢人不一定比較快樂？",
+      "reference_answer": "心理學家安格斯·坎貝爾的研究發現，預測幸福感最可靠的指標不是收入或房子大小，而是一個人能不能掌控自己的生活與時間。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 36
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q005",
+      "category": "direct_fact",
+      "question": "安格斯·坎貝爾的研究指出，什麼是預測幸福感最可靠的指標？",
+      "reference_answer": "掌控自己生活的強大感受，比薪水、房屋大小、職務位階都更能預測正向的幸福感。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 36
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q006",
+      "category": "colloquial_rephrase",
+      "pairs_with": "q007",
+      "question": "我明明收入不錯，卻總是存不到錢，書裡怎麼解釋這種心態？",
+      "reference_answer": "書中把所得超過一定門檻的人分成三個族群：會存錢的人、不覺得自己可以存錢的人、不覺得自己需要存錢的人，後兩者是這一章的討論對象。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 43
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q007",
+      "category": "direct_fact",
+      "question": "第10章把所得超過一定門檻的人分成哪三個族群？",
+      "reference_answer": "會存錢的人、不覺得自己可以存錢的人，以及不覺得自己需要存錢的人。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 43
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q008",
+      "category": "structural_overview",
+      "question": "這本書總共有幾章，各自的主題是什麼？請完整列出。",
+      "reference_answer": "全書共 20 章，依序為：1 沒有人真的是瘋子、2 運氣與風險、3 貪得無厭、4 讓人混淆的複利、5 致富與守財、6 長尾效應、7 自由、8 超跑車主的謬論、9 財富其實是你看不到的資產、10 存錢、11 合理勝過理性、12 意外！、13 預留犯錯空間、14 你會改變、15 天下沒有白吃的午餐、16 你和我、17 悲觀主義的魅力、18 當你相信任何事情、19 觀點匯總、20 我的自白。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": "分散於第 7-84 頁，無獨立目錄頁"
+      },
+      "notes": "這本書沒有目錄頁，20 個章節標題分散嵌在內文各處，這題就是專門用來測試系統會不會在找不到目錄的情況下開始編造內容",
+      "category_id": 1
+    },
+    {
+      "id": "q009",
+      "category": "structural_overview",
+      "question": "幫我列出這本書的目錄。",
+      "reference_answer": "同 q008，正確行為應該是誠實說明書中沒有獨立目錄頁，並盡可能列出檢索到的章節標題，而不是編造一份看似完整的清單。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": "分散於第 7-84 頁，無獨立目錄頁"
+      },
+      "notes": "故意用跟 q008 不同的問法問同一件事，測試回答穩不穩定",
+      "category_id": 1
+    },
+    {
+      "id": "q010",
+      "category": "structural_overview",
+      "question": "這本書的內容大致上分成哪幾個部分？",
+      "reference_answer": "作者在序言中說明全書由 20 個各自獨立、圍繞同一主題的短篇章節組成，不是傳統章節分部的架構，每章都可以單獨閱讀。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": 7
+      },
+      "category_id": 1
+    },
+    {
+      "id": "q011",
+      "category": "out_of_scope",
+      "question": "這本書中文版的定價是多少錢？",
+      "reference_answer": "正確回答應為「參考資料中沒有提到定價資訊」，不應自行編造金額。",
+      "expected_source": null,
+      "category_id": 1
+    },
+    {
+      "id": "q012",
+      "category": "out_of_scope",
+      "question": "作者摩根·豪瑟現在幾歲？",
+      "reference_answer": "正確回答應為「參考資料中沒有提到作者年齡」。",
+      "expected_source": null,
+      "category_id": 1
+    },
+    {
+      "id": "q013",
+      "category": "out_of_scope",
+      "question": "這本書的 ISBN 編號是多少？",
+      "reference_answer": "正確回答應為「參考資料中沒有提到 ISBN」。",
+      "expected_source": null,
+      "category_id": 1
+    },
+    {
+      "id": "q014",
+      "category": "multi_chunk_synthesis",
+      "question": "書裡提到羅納·瑞德和理查·富斯康兩個人的故事，這兩人的際遇分別是什麼，作者用這個對比想傳達什麼道理？",
+      "reference_answer": "羅納·瑞德是佛蒙特州出身、家中第一位高中畢業生的加油站員工兼慈善家，過世後留下可觀財產給慈善機構；理查·富斯康是哈佛畢業的成功商業人士，卻因高額負債與低流動性資產在金融危機中破產、豪宅被法拍。作者用這個對比說明，理財成敗跟學經歷、聰明程度關係不大，耐心與行為習慣才是關鍵。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": "4, 5"
+      },
+      "notes": "答案需要合併第 4 頁（羅納·瑞德）跟第 5 頁（理查·富斯康）兩段內容",
+      "category_id": 1
+    },
+    {
+      "id": "q015",
+      "category": "multi_chunk_synthesis",
+      "question": "作者在投資銀行實習的經歷，跟他書中談「自由」這一章的核心論點有什麼關聯？",
+      "reference_answer": "作者大學時認為投資銀行家能賺大錢就會快樂，實習後卻發現工時長到完全無法掌控自己的時間，只撐了一個月就放棄，這段親身經歷正好印證了他在同一章提出的論點：掌控自己的時間，才是金錢付給人的最高紅利，收入高低不是幸福的關鍵。",
+      "expected_source": {
+        "filename": "致富心態_v2.pdf",
+        "page_number": "36, 37"
+      },
+      "notes": "答案需要合併第 36-37 頁裡『自由』章節的核心論點跟作者自己的實習故事",
+      "category_id": 1
+    }
+  ]
+}
