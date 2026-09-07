@@ -26,11 +26,13 @@ def _char_tokenizer(text):
 
 API_URL = "http://127.0.0.1:8000/api/query"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://100.89.23.28:11434")
-LLM_MODEL = "qwen3:14b"
+# LLM_MODEL = "qwen3:14b"
+LLM_MODEL = "qwen3-money:14b"
 
 TESTSET_PATH = Path(__file__).parent / "eval_testset.json"
 # REPORT_PATH = Path(__file__).parent / "eval_report.json"
-REPORT_PATH = Path(__file__).parent / "eval_report_rewrite.json"
+# REPORT_PATH = Path(__file__).parent / "eval_report_rewrite.json"
+REPORT_PATH = Path(__file__).parent / "eval_report_finetuned.json"
 
 # 用來判斷模型有沒有「老實拒答」的關鍵字，out_of_scope 那三題靠這個判斷對錯
 DECLINE_KEYWORDS = ["資料不足", "沒有提到", "無法回答", "不知道", "沒有相關", "未提及", "無相關", "無法得知", "無法確定", "並未", "沒有明確"]

@@ -4,6 +4,7 @@ import json
 from typing import AsyncGenerator, List
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://100.89.23.28:11434")
+# LLM_MODEL = "qwen3:14b"
 LLM_MODEL = "qwen3:14b"
 
 

@@ -1,0 +1,10 @@
+rag.db
+uploads/
+__pycache__/
+*.pyc
+unsloth_compiled_cache/
+backend/finetune/outputs/
+backend/finetune/gguf_model/
+backend/finetune/gguf_model_gguf/
+*.gguf
+*.safetensors
