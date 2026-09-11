@@ -1,0 +1,142 @@
+{
+  "instructions": "這份測試集內容來自《別對每件事都有反應.pdf》，用 pdftotext 逐頁核對過頁碼。使用前請先：1) 在前端新增一個獨立分類（不要用「電子書」，避免跟《致富心態》混在同一個檢索池）；2) 把這本書上傳到新分類；3) 查出新分類的 category_id；4) 把下面每一題的 category_id 從 null 改成查到的數字（可以用之前用過的那段 Python 一次改完，不用一題一題手動改）。",
+
+  "categories_explained": {
+    "direct_fact": "書裡有明確寫出答案的單一觀念查詢，及格線",
+    "colloquial_rephrase": "跟某個 direct_fact 問的是同一件事，但用口語、生活化描述而不是書裡的用詞",
+    "structural_overview": "問全書章節總覽，這本書一樣沒有獨立目錄頁、5 章標題分散嵌在內文裡，跟《致富心態》同一種弱點，用來對照兩本書是否有同樣的幻覺傾向",
+    "out_of_scope": "書裡完全沒提到的內容（出版社、作者年齡、定價），測試會不會老實拒答",
+    "multi_chunk_synthesis": "答案要合併書裡兩個不同小節的內容才答得完整"
+  },
+
+  "test_cases": [
+    {
+      "id": "q001",
+      "category": "direct_fact",
+      "question": "面對自己不知道的事情，作者建議應該怎麼回應？",
+      "reference_answer": "作者建議堂堂正正說出「不知道」就好，不用因此鬧彆扭或覺得丟臉，這樣就能輕易躲開來自四面八方「你知道這個嗎」的追問。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 17 },
+      "category_id": 2
+    },
+    {
+      "id": "q002",
+      "category": "colloquial_rephrase",
+      "pairs_with": "q001",
+      "question": "我常常不知道一些大家都在討論的事情，會覺得自己跟不上、很丟臉，該怎麼辦？",
+      "reference_answer": "與 q001 相同概念，作者建議坦然說不知道即可，不用感到丟臉。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 17 },
+      "category_id": 2
+    },
+    {
+      "id": "q003",
+      "category": "direct_fact",
+      "question": "作者認為拿自己的生活跟社會統計出來的「平均值」比較，是不是有意義的事？如果真的想比較，該找誰比較合適？",
+      "reference_answer": "作者認為跟平均值比較是最缺乏實質意義的事，因為平均值不代表任何具體的個人；真的想比較的話，應該跟「狀態最巔峰時的自己」相比，這樣才能成為成長的動力。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 10 },
+      "category_id": 2
+    },
+    {
+      "id": "q004",
+      "category": "colloquial_rephrase",
+      "pairs_with": "q003",
+      "question": "我常常忍不住去查同年紀的人薪水或成就，跟自己比較，這樣正常嗎？",
+      "reference_answer": "與 q003 相同概念，作者認為這種比較沒有意義，該比較的對象是過去巔峰時期的自己。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 10 },
+      "category_id": 2
+    },
+    {
+      "id": "q005",
+      "category": "direct_fact",
+      "question": "書裡說的「無緣」是指什麼情況？舉了哪些例子？",
+      "reference_answer": "「無緣」指的是與某人某事不合、行不通的狀態，書中舉的例子包括沒考上的學校、應徵不上的公司、沒能簽約的企劃案、中途取消的工作，作者認為這些純粹只是因為「無緣」，不需要為此感到心情沉重。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 5 },
+      "category_id": 2
+    },
+    {
+      "id": "q006",
+      "category": "direct_fact",
+      "question": "「盡人事」這一節裡，作者說完成盡人事之後應該怎麼做？",
+      "reference_answer": "作者說盡完人事之後，接下來就放著不管，把結果交給天命，不用再去操心已經完結的事情。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 36 },
+      "category_id": 2
+    },
+    {
+      "id": "q007",
+      "category": "colloquial_rephrase",
+      "pairs_with": "q006",
+      "question": "已經盡全力做完一件事之後，還要一直擔心結果好不好嗎？",
+      "reference_answer": "與 q006 相同概念，作者認為盡完人事之後就該放手，不用再操心結果。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 36 },
+      "category_id": 2
+    },
+    {
+      "id": "q008",
+      "category": "structural_overview",
+      "question": "這本書總共有幾章，各自的主題是什麼？請完整列出。",
+      "reference_answer": "全書共 5 章：第一章 別硬是要參一腳、第二章 別在意每件事、第三章 別對每件事都有反應、第四章 別白忙一場累壞自己、第五章 別硬是要分出是非對錯。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": "分散於第 1-36 頁，無獨立目錄頁" },
+      "category_id": 2,
+      "notes": "這本書一樣沒有目錄頁，用來對照跟《致富心態》是否有同樣的幻覺傾向"
+    },
+    {
+      "id": "q009",
+      "category": "structural_overview",
+      "question": "幫我列出這本書的目錄。",
+      "reference_answer": "同 q008，正確行為是誠實說明沒有獨立目錄頁，盡量列出檢索到的章節標題，不要編造。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": "分散於第 1-36 頁，無獨立目錄頁" },
+      "category_id": 2,
+      "notes": "刻意用跟 q008 不同問法問同一件事，測穩定性"
+    },
+    {
+      "id": "q010",
+      "category": "structural_overview",
+      "question": "這本書第三章的主題是什麼？標題是什麼？",
+      "reference_answer": "第三章的標題是「別對每件事都有反應」，跟書名相同，內容談的是如何停止磨耗心靈的練習。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": 15 },
+      "category_id": 2,
+      "notes": "跟 q008/q009 不同，這題問的是單一章節，理論上比較容易被正確檢索到"
+    },
+    {
+      "id": "q011",
+      "category": "out_of_scope",
+      "question": "這本書是哪一間出版社出版的？",
+      "reference_answer": "正確回答應為「參考資料中沒有提到出版社資訊」，不應自行編造。",
+      "expected_source": null,
+      "category_id": 2
+    },
+    {
+      "id": "q012",
+      "category": "out_of_scope",
+      "question": "作者枡野俊明現在幾歲？",
+      "reference_answer": "正確回答應為「參考資料中沒有提到作者年齡」。",
+      "expected_source": null,
+      "category_id": 2
+    },
+    {
+      "id": "q013",
+      "category": "out_of_scope",
+      "question": "這本書的定價是多少錢？",
+      "reference_answer": "正確回答應為「參考資料中沒有提到定價資訊」。",
+      "expected_source": null,
+      "category_id": 2
+    },
+    {
+      "id": "q014",
+      "category": "multi_chunk_synthesis",
+      "question": "書裡分別在「停止後悔，而是進行檢驗」跟「後悔只是妄想」這兩節談到後悔，這兩節各自怎麼建議面對後悔，兩者的角度有什麼不同？",
+      "reference_answer": "「停止後悔，而是進行檢驗」（第38節）建議把「後悔」轉換成「檢驗」，重新檢視過程、找出哪裡出錯，把失敗經驗變成避免未來失敗的基石；「後悔只是妄想」（第86節）則說對過去的懊悔跟對未來的不安都只是「妄想」，建議直接捨除妄想、專注眼前該做的事。前者強調把後悔轉化成檢討，後者強調直接捨棄後悔本身，角度不同但都指向別沉溺在後悔情緒裡。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": "15, 32" },
+      "category_id": 2,
+      "notes": "答案需合併第 15 頁（第38節）跟第 32 頁（第86節）兩段內容"
+    },
+    {
+      "id": "q015",
+      "category": "multi_chunk_synthesis",
+      "question": "書裡「此時、此地、自己」跟「盡人事」這兩節，分別怎麼談專注眼前的重要性，兩者的建議有什麼共通點？",
+      "reference_answer": "「此時、此地、自己」（第67節）講這句禪語，強調生命只存在於「現在」，能做的只有眼前該完成的事；「盡人事」（第99節）強調全力投入眼前能做的事、做完就放下、不用擔心結果。兩者共通點都是要求把注意力放在當下能做的事，不糾結過去或未來的結果。",
+      "expected_source": { "filename": "別對每件事都有反應.pdf", "page_number": "25, 36" },
+      "category_id": 2,
+      "notes": "答案需合併第 25 頁（第67節）跟第 36 頁（第99節）兩段內容"
+    }
+  ]
+}

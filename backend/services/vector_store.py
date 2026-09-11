@@ -1,16 +1,31 @@
-# backend/services/vector_store.py
+import os
+import uuid
+from typing import List, Optional
+
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance, VectorParams, PointStruct,
     Filter, FieldCondition, MatchValue,
-    FilterSelector
+    FilterSelector, PayloadSchemaType
 )
-from typing import List, Optional
-import uuid
+
+# ============================================================
+# 本地端／雲端切換：改 RAG_ENV 這一個環境變數就好
+#   RAG_ENV=local（預設）-> 接本機 Docker 跑的 Qdrant（localhost:6333）
+#   RAG_ENV=cloud         -> 接 Qdrant Cloud（需要 QDRANT_URL / QDRANT_API_KEY）
+# ============================================================
+RAG_ENV = os.getenv("RAG_ENV", "local")
 
 COLLECTION = "rag_documents"
 VECTOR_DIM = 1024
-client = AsyncQdrantClient(host="localhost", port=6333)
+
+if RAG_ENV == "cloud":
+    QDRANT_URL = os.environ["QDRANT_URL"]
+    QDRANT_API_KEY = os.environ["QDRANT_API_KEY"]
+    client = AsyncQdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+else:
+    client = AsyncQdrantClient(host="localhost", port=6333)
+
 
 async def ensure_collection():
     existing = await client.get_collections()
@@ -20,6 +35,26 @@ async def ensure_collection():
             collection_name=COLLECTION,
             vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE)
         )
+
+    # category_id / document_id 這兩個過濾用欄位一律確保有索引——
+    # Qdrant Cloud 沒索引會直接報 400，本機版沒索引也能查（只是慢），
+    # 兩邊都建索引，行為統一、不用在這裡另外分支
+    info = await client.get_collection(COLLECTION)
+    existing_fields = set(info.payload_schema.keys()) if info.payload_schema else set()
+
+    if "category_id" not in existing_fields:
+        await client.create_payload_index(
+            collection_name=COLLECTION,
+            field_name="category_id",
+            field_schema=PayloadSchemaType.INTEGER,
+        )
+    if "document_id" not in existing_fields:
+        await client.create_payload_index(
+            collection_name=COLLECTION,
+            field_name="document_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+
 
 async def upsert_chunks(
     document_id: str,
@@ -46,6 +81,7 @@ async def upsert_chunks(
     ]
     await client.upsert(collection_name=COLLECTION, points=points)
 
+
 async def search_dense(
     query_vector: List[float],
     top_k: int = 10,
@@ -64,6 +100,7 @@ async def search_dense(
         with_payload=True
     )
     return results
+
 
 async def get_all_chunks(category_id: Optional[int] = None) -> List[dict]:
     scroll_filter = None
@@ -88,6 +125,7 @@ async def get_all_chunks(category_id: Optional[int] = None) -> List[dict]:
         offset = next_offset
     return [{"id": str(p.id), "payload": p.payload} for p in all_points]
 
+
 async def delete_by_document_id(document_id: str):
     await client.delete(
         collection_name=COLLECTION,
@@ -95,6 +133,7 @@ async def delete_by_document_id(document_id: str):
             must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
         ))
     )
+
 
 async def delete_by_category_id(category_id: int):
     await client.delete(

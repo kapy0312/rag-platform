@@ -8,3 +8,4 @@ backend/finetune/gguf_model/
 backend/finetune/gguf_model_gguf/
 *.gguf
 *.safetensors
+document/
